@@ -1,0 +1,8 @@
+# Archivos de Datos y Personales
+finanzas_personales.db
+
+# Cache de Python y Entornos Virtuales
+__pycache__/
+venv/
+.env
+*.pyc
