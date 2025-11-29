@@ -1,198 +1,262 @@
-import tkinter as tk
-from tkinter import ttk
-from tkinter import messagebox
+# --- 1. IMPORTS Y LIBRERÍAS ---
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output, State
+import pandas as pd
+import sqlite3
+import plotly.express as px
 from datetime import datetime
+import json
 
-# Importamos la clase que creaste en el archivo finanzas_db.py
-from finanzas_db import GestorFinanzasDB 
-# 🔥 NUEVA IMPORTACIÓN: Traemos las dos funciones de tu archivo finanza_reportes.py
-from finanzas_reportes import generar_reporte_pandas, visualizar_resumen 
+# --- 2. GESTIÓN DE BASE DE DATOS (BLINDADA) ---
+DB_NAME = 'finanzas_personales.db'
 
-# --- CLASE PRINCIPAL DE LA APLICACIÓN (TKINTER) ---
-
-class AppFinanzas(tk.Tk):
-    """
-    Clase que representa la ventana principal de la aplicación.
-    Hereda de tk.Tk, convirtiéndose en la ventana.
-    """
-    def __init__(self):
-        super().__init__()
-        
-        # 1. Configuración de la Ventana
-        self.title("💰 Gestor de Finanzas Personales (Desktop)")
-        self.geometry("750x600") # Aumentamos un poco el tamaño
-        
-        # 2. Inicializar la Base de Datos
-        self.db = GestorFinanzasDB()
-        
-        # 3. Crear los Widgets de la Interfaz
-        self.crear_widgets()
-        
-        # 4. Cargar y Mostrar los datos iniciales
-        self.actualizar_vista()
-        
-    def crear_widgets(self):
-        """Define y posiciona todos los elementos de la interfaz."""
-        
-        # --- 3A. Frame de Entrada de Datos ---
-        frame_entrada = ttk.LabelFrame(self, text="➕ Nueva Transacción", padding="10 10 10 10")
-        frame_entrada.pack(pady=10, padx=10, fill="x")
-        
-        # Variables y Campos de Entrada
-        ttk.Label(frame_entrada, text="Fecha (YYYY-MM-DD):").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.entrada_fecha = ttk.Entry(frame_entrada, width=15)
-        self.entrada_fecha.insert(0, datetime.now().strftime("%Y-%m-%d")) 
-        self.entrada_fecha.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        
-        ttk.Label(frame_entrada, text="Descripción:").grid(row=0, column=2, padx=5, pady=5, sticky="w")
-        self.entrada_desc = ttk.Entry(frame_entrada, width=30)
-        self.entrada_desc.grid(row=0, column=3, padx=5, pady=5, sticky="ew")
-
-        ttk.Label(frame_entrada, text="Monto:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        self.entrada_monto = ttk.Entry(frame_entrada, width=15)
-        self.entrada_monto.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        
-        ttk.Label(frame_entrada, text="Tipo:").grid(row=1, column=2, padx=5, pady=5, sticky="w")
-        self.tipo_var = tk.StringVar(value="GASTO")
-        ttk.Radiobutton(frame_entrada, text="Gasto", variable=self.tipo_var, value="GASTO").grid(row=1, column=3, sticky="w")
-        ttk.Radiobutton(frame_entrada, text="Ingreso", variable=self.tipo_var, value="INGRESO").grid(row=1, column=4, sticky="w")
-        
-        # Botón de Guardar
-        ttk.Button(frame_entrada, text="Guardar Transacción", command=self.guardar_transaccion).grid(row=2, column=0, columnspan=5, pady=10, sticky="ew")
-
-        # --- 3B. Frame de Resumen, Botones y Treeview ---
-        
-        frame_resumen = ttk.Frame(self)
-        frame_resumen.pack(pady=5, padx=10, fill="x")
-        
-        # Etiqueta de Saldo
-        self.saldo_label = ttk.Label(frame_resumen, text="SALDO TOTAL: $0.00 | INGRESOS: $0.00 | GASTOS: $0.00", font=("Arial", 12, "bold"))
-        self.saldo_label.pack(side="left", padx=10)
-
-        # 🔥 BOTÓN NUEVO: Llama al método para generar la gráfica
-        ttk.Button(frame_resumen, text="📈 Generar Gráfica", command=self.generar_grafica).pack(side="right", padx=5)
-        
-        # Botón de Eliminar
-        ttk.Button(frame_resumen, text="❌ Eliminar Seleccionado", command=self.eliminar_transaccion_seleccionada).pack(side="right", padx=5)
-        
-        # Historial (Treeview)
-        frame_historial = ttk.LabelFrame(self, text="📋 Historial de Transacciones", padding="10 5 10 5")
-        frame_historial.pack(pady=5, padx=10, fill="both", expand=True)
-        
-        self.tree = self.crear_treeview(frame_historial)
-        
-    def crear_treeview(self, parent):
-        """Crea el widget Treeview (tabla) y sus columnas."""
-        
-        columnas = ('ID', 'Fecha', 'Tipo', 'Monto', 'Descripción')
-        tree = ttk.Treeview(parent, columns=columnas, show='headings')
-        
-        tree.heading('ID', text='ID', anchor='center')
-        tree.heading('Fecha', text='Fecha', anchor='center')
-        tree.heading('Tipo', text='Tipo', anchor='center')
-        tree.heading('Monto', text='Monto', anchor='e')
-        tree.heading('Descripción', text='Descripción', anchor='w')
-
-        tree.column('ID', width=30, anchor='center')
-        tree.column('Fecha', width=80, anchor='center')
-        tree.column('Tipo', width=70, anchor='center')
-        tree.column('Monto', width=70, anchor='e')
-        tree.column('Descripción', width=200, anchor='w')
-        
-        tree.pack(fill="both", expand=True)
-        return tree
-
-    # 🔥 NUEVO MÉTODO: Generar la gráfica
-    def generar_grafica(self):
-        """Llama a las funciones del módulo de reportes para mostrar el gráfico."""
-        try:
-            # 1. Obtenemos el DataFrame de Pandas usando la función de finanza_reportes
-            df_finanzas = generar_reporte_pandas()
-            
-            # 2. Verificamos si hay datos
-            if not df_finanzas.empty:
-                # 3. Visualizamos el resumen (esto abre la ventana de Matplotlib)
-                visualizar_resumen(df_finanzas)
-            else:
-                messagebox.showwarning("Advertencia", "No hay transacciones registradas para generar el gráfico.")
-        
-        except Exception as e:
-             messagebox.showerror("Error", f"Asegúrate de tener instalados Pandas y Matplotlib. Error: {e}")
-        
-    
-    def actualizar_vista(self):
-        """
-        Llama a los métodos de la clase DB y actualiza la interfaz (saldo y tabla).
-        """
-        # 1. Limpiar la tabla Treeview antes de cargar nuevos datos
-        for item in self.tree.get_children():
-            self.tree.delete(item)
-            
-        # 2. Cargar y actualizar el Saldo
-        saldo, ingresos, gastos = self.db.obtener_saldo_total()
-        self.saldo_label.config(text=f"SALDO TOTAL: ${saldo:,.2f} | INGRESOS: ${ingresos:,.2f} | GASTOS: ${gastos:,.2f}")
-        
-        # 3. Cargar y llenar la tabla Treeview
-        transacciones = self.db.obtener_transacciones()
-        for transaccion in transacciones:
-            datos_formateados = (
-                transaccion[0], # ID
-                transaccion[1], # Fecha
-                transaccion[4], # Tipo
-                f"${transaccion[3]:,.2f}", # Monto formateado
-                transaccion[2] # Descripción
+def inicializar_db():
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        # Aseguramos nombres de columnas estándar
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS transacciones (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT,
+                descripcion TEXT,
+                monto REAL,
+                tipo TEXT
             )
-            self.tree.insert('', tk.END, values=datos_formateados)
+        ''')
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error DB: {e}")
 
-    def guardar_transaccion(self):
-        """
-        Función llamada al presionar el botón de guardar.
-        Valida datos y llama al método de inserción de la clase DB.
-        """
-        fecha = self.entrada_fecha.get()
-        descripcion = self.entrada_desc.get()
-        tipo = self.tipo_var.get()
+def obtener_datos():
+    """Obtiene datos y renombra columnas para evitar KeyError."""
+    conn = sqlite3.connect(DB_NAME)
+    # Pedimos las columnas en un orden específico
+    try:
+        query = "SELECT id, fecha, tipo, descripcion, monto FROM transacciones ORDER BY fecha DESC, id DESC"
+        df = pd.read_sql_query(query, conn)
         
-        try:
-            monto = float(self.entrada_monto.get())
-            if monto <= 0:
-                raise ValueError
-        except ValueError:
-            messagebox.showerror("Error", "El monto debe ser un número positivo.")
-            return
-
-        if not fecha or not descripcion:
-             messagebox.showerror("Error", "Todos los campos son obligatorios.")
-             return
-             
-        self.db.insertar_transaccion(fecha, descripcion, monto, tipo)
-        
-        self.entrada_desc.delete(0, tk.END)
-        self.entrada_monto.delete(0, tk.END)
-        
-        self.actualizar_vista()
-
-    def eliminar_transaccion_seleccionada(self):
-        """Maneja la lógica para eliminar el elemento seleccionado en el Treeview."""
-        item_seleccionado = self.tree.selection()
-        
-        if not item_seleccionado:
-            messagebox.showwarning("Advertencia", "Por favor, selecciona una transacción para eliminar.")
-            return
-
-        valores = self.tree.item(item_seleccionado, 'values')
-        id_transaccion = valores[0]
-
-        if messagebox.askyesno("Confirmar Eliminación", f"¿Estás seguro de que quieres eliminar la transacción ID {id_transaccion} ({valores[4]})?"):
+        # --- CORRECCIÓN VITAL PARA EL KEYERROR ---
+        # Forzamos los nombres de las columnas para que coincidan con el código Python
+        if not df.empty:
+            df.columns = ['ID', 'Fecha', 'Tipo', 'Descripcion', 'Monto']
+        else:
+            # Si está vacía, creamos el DataFrame con las columnas esperadas
+            df = pd.DataFrame(columns=['ID', 'Fecha', 'Tipo', 'Descripcion', 'Monto'])
             
-            if self.db.eliminar_transaccion(id_transaccion):
-                messagebox.showinfo("Éxito", f"Transacción ID {id_transaccion} eliminada.")
-                self.actualizar_vista()
-            else:
-                messagebox.showerror("Error", "No se pudo eliminar la transacción.")
+    except Exception as e:
+        print(f"Error leyendo datos: {e}")
+        df = pd.DataFrame(columns=['ID', 'Fecha', 'Tipo', 'Descripcion', 'Monto'])
+        
+    conn.close()
+    return df
 
+def agregar_transaccion(fecha, descripcion, monto, tipo):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        # Lógica: Gasto es negativo para el cálculo interno
+        monto_final = -abs(float(monto)) if tipo == 'GASTO' else abs(float(monto))
+        
+        cursor.execute(
+            "INSERT INTO transacciones (fecha, descripcion, monto, tipo) VALUES (?, ?, ?, ?)",
+            (fecha, descripcion, monto_final, tipo)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error guardando: {e}")
+        return False
 
-# --- BLOQUE DE EJECUCIÓN (¡Fuera de la clase y sin indentación!) ---
-if __name__ == "__main__":
-    app = AppFinanzas()
-    app.mainloop()
+def eliminar_transaccion_db(transaccion_id):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM transacciones WHERE id = ?", (transaccion_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        return False
+
+inicializar_db()
+
+# --- 3. CONFIGURACIÓN APP ---
+app = dash.Dash(__name__, external_stylesheets=['https://codepen.io/chriddyp/pen/bWLwgP.css'], suppress_callback_exceptions=True)
+
+# --- 4. LAYOUT ---
+app.layout = html.Div(style={'maxWidth': '1200px', 'margin': 'auto', 'padding': '20px'}, children=[
+    
+    dcc.Store(id='senal-actualizacion', data=0),
+
+    html.H1("💰 Gestor de Finanzas Web", style={'textAlign': 'center', 'color': '#2E86C1'}),
+    
+    # SALDO
+    html.Div(id='seccion-saldo', style={'textAlign': 'center', 'margin': '20px 0'}),
+    
+    html.Hr(),
+
+    # FORMULARIO
+    html.Div([
+        html.H4("➕ Añadir Movimiento", style={'color': '#2E86C1'}),
+        html.Div([
+            # CORRECCIÓN VITAL PARA LA FECHA: Usamos type='text' para compatibilidad total
+            html.Div([
+                html.Label("Fecha (YYYY-MM-DD):"),
+                dcc.Input(id='input-fecha', type='text', value=datetime.today().strftime('%Y-%m-%d'), placeholder='2025-01-01', style={'width': '100%'})
+            ], style={'flex': '1'}),
+            
+            html.Div([
+                html.Label("Tipo:"),
+                dcc.Dropdown(
+                    id='input-tipo',
+                    options=[{'label': '📉 Gasto', 'value': 'GASTO'}, {'label': '📈 Ingreso', 'value': 'INGRESO'}],
+                    value='GASTO',
+                    clearable=False
+                )
+            ], style={'flex': '1'}),
+
+            html.Div([
+                html.Label("Monto ($):"),
+                dcc.Input(id='input-monto', type='number', placeholder='0.00', min=0, style={'width': '100%'})
+            ], style={'flex': '1'}),
+
+            html.Div([
+                html.Label("Descripción:"),
+                dcc.Input(id='input-desc', type='text', placeholder='Ej: Supermercado', style={'width': '100%'})
+            ], style={'flex': '2'}),
+            
+            html.Button('Guardar', id='btn-guardar', n_clicks=0, 
+                        style={'backgroundColor': '#28B463', 'color': 'white', 'height': '38px', 'marginTop': '25px'})
+            
+        ], style={'display': 'flex', 'gap': '15px', 'alignItems': 'center'}),
+        
+        html.Div(id='notificacion-guardado', style={'marginTop': '10px', 'textAlign': 'center'})
+    ], style={'backgroundColor': '#F8F9F9', 'padding': '15px', 'borderRadius': '8px'}),
+
+    html.Hr(),
+
+    # VISUALIZACIÓN
+    html.Div([
+        html.Div([
+            html.H4("📋 Historial", style={'color': '#2E86C1'}),
+            html.Div(id='contenedor-tabla') 
+        ], className='six columns'),
+
+        html.Div([
+            html.H4("📊 Distribución", style={'color': '#2E86C1'}),
+            dcc.Graph(id='grafica-pastel')
+        ], className='six columns'),
+
+    ], className='row')
+])
+
+# --- 5. CALLBACKS ---
+
+@app.callback(
+    Output('notificacion-guardado', 'children'),
+    Output('input-monto', 'value'),
+    Output('input-desc', 'value'),
+    Output('senal-actualizacion', 'data'),
+    Input('btn-guardar', 'n_clicks'),
+    State('input-fecha', 'value'),
+    State('input-monto', 'value'),
+    State('input-tipo', 'value'),
+    State('input-desc', 'value'),
+    State('senal-actualizacion', 'data'),
+    prevent_initial_call=True
+)
+def guardar_callback(n_clicks, fecha, monto, tipo, desc, senal_actual):
+    if not fecha or not monto or not desc:
+        return html.Span("⚠️ Faltan datos", style={'color': 'red'}), dash.no_update, dash.no_update, dash.no_update
+    
+    if agregar_transaccion(fecha, desc, monto, tipo):
+        return html.Span("✅ Guardado", style={'color': 'green'}), '', '', (senal_actual or 0) + 1
+    else:
+        return html.Span("❌ Error DB", style={'color': 'red'}), dash.no_update, dash.no_update, dash.no_update
+
+@app.callback(
+    Output('senal-actualizacion', 'data', allow_duplicate=True),
+    Input({'type': 'btn-eliminar', 'index': dash.ALL}, 'n_clicks'),
+    State('senal-actualizacion', 'data'),
+    prevent_initial_call=True
+)
+def eliminar_callback(n_clicks_list, senal_actual):
+    ctx = dash.callback_context
+    if not ctx.triggered: return dash.no_update
+    
+    try:
+        clicked_id_str = ctx.triggered[0]['prop_id'].split('.')[0]
+        clicked_id_json = json.loads(clicked_id_str)
+        transaccion_id = clicked_id_json['index']
+        
+        # Verificar que sea un click real
+        click_val = ctx.triggered[0]['value']
+        if not click_val or click_val == 0:
+            return dash.no_update
+
+        eliminar_transaccion_db(transaccion_id)
+        return (senal_actual or 0) + 1
+    except:
+        return dash.no_update
+
+@app.callback(
+    Output('contenedor-tabla', 'children'),
+    Output('grafica-pastel', 'figure'),
+    Output('seccion-saldo', 'children'),
+    Input('senal-actualizacion', 'data')
+)
+def refrescar_todo(senal):
+    df = obtener_datos()
+    
+    # Cálculos seguros usando las columnas forzadas
+    if df.empty:
+        saldo, ingresos, gastos = 0, 0, 0
+    else:
+        # Aquí usamos 'Monto' con mayúscula porque lo forzamos en obtener_datos()
+        saldo = df['Monto'].sum()
+        ingresos = df[df['Monto'] > 0]['Monto'].sum()
+        gastos = abs(df[df['Monto'] < 0]['Monto'].sum())
+    
+    estilo_num = {'fontSize': '20px', 'fontWeight': 'bold', 'margin': '0 15px'}
+    html_saldo = html.Div([
+        html.Span(f"Total: ${saldo:,.2f}", style={**estilo_num, 'color': '#2E86C1'}),
+        html.Span(f"Ingresos: ${ingresos:,.2f}", style={**estilo_num, 'color': '#28B463'}),
+        html.Span(f"Gastos: ${gastos:,.2f}", style={**estilo_num, 'color': '#C0392B'})
+    ])
+
+    # Gráfica
+    if df.empty:
+        fig = px.pie(names=['Vacio'], values=[1], title="Sin datos")
+    else:
+        df['Abs'] = df['Monto'].abs()
+        fig = px.pie(df, values='Abs', names='Tipo', title='Resumen', color='Tipo',
+                     color_discrete_map={'GASTO':'#C0392B', 'INGRESO':'#28B463'})
+
+    # Tabla Manual
+    if df.empty:
+        tabla = html.Div("Sin transacciones")
+    else:
+        rows = []
+        for i, row in df.iterrows():
+            color = '#28B463' if row['Monto'] >= 0 else '#C0392B'
+            rows.append(html.Tr([
+                html.Td(row['Fecha']),
+                html.Td(row['Tipo']),
+                html.Td(row['Descripcion']),
+                html.Td(f"${row['Monto']:,.2f}", style={'color': color, 'fontWeight': 'bold'}),
+                html.Td(html.Button('🗑️', id={'type': 'btn-eliminar', 'index': row['ID']}))
+            ]))
+            
+        tabla = html.Table([
+            html.Tr([html.Th("Fecha"), html.Th("Tipo"), html.Th("Desc"), html.Th("Monto"), html.Th("X")])
+        ] + rows, style={'width': '100%'})
+
+    return tabla, fig, html_saldo
+
+if __name__ == '__main__':
+    print("Abriendo en http://127.0.0.1:8080/")
+    app.run(debug=True, port=8080)
